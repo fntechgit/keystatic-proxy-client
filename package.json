@@ -1,11 +1,15 @@
 {
   "name": "keystatic-proxy-client",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Site-side wrapper that routes Keystatic GitHub OAuth through a shared external auth proxy",
   "type": "module",
   "main": "./src/index.js",
+  "types": "./src/index.d.ts",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
   },
   "files": [
     "src",
