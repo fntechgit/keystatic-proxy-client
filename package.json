@@ -1,0 +1,45 @@
+{
+  "name": "keystatic-proxy-client",
+  "version": "0.2.0",
+  "description": "Site-side wrapper that routes Keystatic GitHub OAuth through a shared external auth proxy",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test src/*.test.js"
+  },
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@keystatic/next": ">=5",
+    "next": ">=14"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fntechgit/keystatic-proxy-client.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "keystatic",
+    "github",
+    "oauth",
+    "proxy",
+    "cms"
+  ],
+  "author": "FNTech",
+  "license": "MIT",
+  "dependencies": {
+    "cookie": "^1.1.1",
+    "jose": "^6.2.3"
+  }
+}
