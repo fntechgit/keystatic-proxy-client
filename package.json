@@ -1,6 +1,6 @@
 {
   "name": "keystatic-proxy-client",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Keystatic API handler that routes GitHub sign-in through a shared auth proxy, for any Fetch API host",
   "type": "module",
   "main": "./src/index.js",
