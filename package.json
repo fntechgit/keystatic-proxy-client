@@ -1,7 +1,7 @@
 {
   "name": "keystatic-proxy-client",
   "version": "0.2.3",
-  "description": "Site-side wrapper that routes Keystatic GitHub OAuth through a shared external auth proxy",
+  "description": "Keystatic API handler that routes GitHub sign-in through a shared auth proxy, for any Fetch API host",
   "type": "module",
   "main": "./src/index.js",
   "types": "./src/index.d.ts",
@@ -23,8 +23,7 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@keystatic/next": ">=5",
-    "next": ">=14"
+    "@keystatic/core": ">=0.5"
   },
   "repository": {
     "type": "git",

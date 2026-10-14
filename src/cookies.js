@@ -5,25 +5,25 @@ import { serialize } from 'cookie';
 export const ACCESS_TOKEN_COOKIE = 'keystatic-gh-access-token';
 export const REFRESH_TOKEN_COOKIE = 'keystatic-gh-refresh-token';
 
-const isSecure = () => process.env.NODE_ENV === 'production';
 const expiresAt = (seconds) => new Date(Date.now() + seconds * 1000);
 
-export function accessTokenCookie(token, expiresInSeconds) {
+// `secure` follows the site's protocol: browsers drop Secure cookies on http.
+export function accessTokenCookie(token, expiresInSeconds, { secure }) {
     return serialize(ACCESS_TOKEN_COOKIE, token, {
         path: '/',
         sameSite: 'lax',
-        secure: isSecure(),
+        secure,
         maxAge: expiresInSeconds,
         expires: expiresAt(expiresInSeconds)
     });
 }
 
-export function refreshTokenCookie(encrypted, expiresInSeconds) {
+export function refreshTokenCookie(encrypted, expiresInSeconds, { secure }) {
     return serialize(REFRESH_TOKEN_COOKIE, encrypted, {
         path: '/',
         sameSite: 'lax',
         httpOnly: true,
-        secure: isSecure(),
+        secure,
         maxAge: expiresInSeconds,
         expires: expiresAt(expiresInSeconds)
     });

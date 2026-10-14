@@ -1,16 +1,18 @@
 # keystatic-proxy-client
 
-Site-side wrapper that lets a Next.js Keystatic site authenticate editors
-through a shared FN OAuth proxy instead of registering its own GitHub App.
+Keystatic API handler that lets a site authenticate editors through a shared
+GitHub OAuth proxy instead of registering its own GitHub App. It runs in any
+host that speaks the Fetch API, Next.js route handlers included.
 
 Pairs with [keystatic-auth-proxy](https://github.com/fntechgit/keystatic-auth-proxy).
 
 ## Why
 
 [Keystatic](https://keystatic.com) in GitHub-storage mode wants each site to
-register its own GitHub App and configure five env vars. This wrapper
-delegates the OAuth code exchange to a shared proxy so a site only needs
-three env vars (proxy URL + two secrets) and no per-site GitHub App.
+register its own GitHub App and configure five env vars. This handler
+delegates the OAuth code exchange and token refresh to a shared proxy, so a
+site only needs three settings (proxy URL + two secrets) and no per-site
+GitHub App.
 
 ## Install
 
@@ -18,45 +20,73 @@ three env vars (proxy URL + two secrets) and no per-site GitHub App.
 pnpm add keystatic-proxy-client
 ```
 
-Peer deps assumed already installed: `@keystatic/next`, `next`.
+Peer dependency: `@keystatic/core`.
 
 ## Usage
 
-In `app/api/keystatic/[[...params]]/route.js`:
+`makeProxyAwareHandler` returns a `(Request) => Promise<Response>` handler.
+Mount it on `/api/keystatic/*` and pass three settings:
+
+| Option | Purpose |
+|---|---|
+| `proxyUrl` | Origin of the deployed auth proxy |
+| `handoffSecret` | HMAC key shared with the proxy, for its signed requests and handoffs |
+| `secret` | Cookie encryption key, at least 32 characters (same scheme as Keystatic's `KEYSTATIC_SECRET`) |
+
+When all three are set, sign-in and token refresh go through the proxy. When
+any is missing, the handler is Keystatic's own API handler, unchanged (useful
+with local storage in development). The handler reads no environment
+variables: read them where you create it.
+
+### Next.js
+
+`app/api/keystatic/[...params]/route.js`:
 
 ```js
-import { makeProxyAwareRouteHandler } from 'keystatic-proxy-client';
+import { makeProxyAwareHandler, siteOriginFromRequest } from 'keystatic-proxy-client';
 import keystaticConfig from '../../../../keystatic.config';
 
-export const { GET, POST } = makeProxyAwareRouteHandler({ config: keystaticConfig });
+const handler = makeProxyAwareHandler({
+  config: keystaticConfig,
+  proxyUrl: process.env.KEYSTATIC_AUTH_PROXY_URL,
+  handoffSecret: process.env.KEYSTATIC_AUTH_PROXY_HANDOFF_SECRET,
+  secret: process.env.KEYSTATIC_SECRET,
+  siteOrigin: siteOriginFromRequest
+});
+
+export { handler as GET, handler as POST };
 ```
 
-The wrapper reads three env vars (or accepts them as options):
+Next.js dev rewrites the request URL to its own configured host, so the
+URL's origin is not always the one the browser used. `siteOriginFromRequest`
+reads the origin from the Host and forwarding headers instead.
 
-| Env var | Option key | Purpose |
-|---|---|---|
-| `KEYSTATIC_AUTH_PROXY_URL` | `proxyUrl` | Origin of the deployed auth proxy |
-| `KEYSTATIC_AUTH_PROXY_HANDOFF_SECRET` | `handoffSecret` | HMAC key for verifying the proxy's handoff JWS |
-| `KEYSTATIC_SECRET` | `secret` | Cookie encryption key (same scheme as upstream Keystatic) |
-
-When all three are present, GitHub OAuth routes through the proxy. When any
-is missing, behavior is identical to calling Keystatic's `makeRouteHandler`
-directly (useful for local-mode dev).
-
-### Programmatic config
+### Other Fetch API hosts
 
 ```js
-makeProxyAwareRouteHandler({
+import { makeProxyAwareHandler } from 'keystatic-proxy-client';
+import keystaticConfig from './keystatic.config';
+
+const keystatic = makeProxyAwareHandler({
   config: keystaticConfig,
-  proxyUrl: 'https://keystatic-auth-proxy.netlify.app',
-  handoffSecret: process.env.MY_HANDOFF_SECRET,
-  secret: process.env.MY_KEYSTATIC_SECRET
+  proxyUrl: env.KEYSTATIC_AUTH_PROXY_URL,
+  handoffSecret: env.KEYSTATIC_AUTH_PROXY_HANDOFF_SECRET,
+  secret: env.KEYSTATIC_SECRET
 });
+
+// For every request under /api/keystatic/*:
+return keystatic(request);
 ```
+
+The site's origin defaults to the request URL's origin. Pass
+`siteOrigin: (req) => '...'` when the host sees a different URL than the
+browser.
+
+Cookies are `Secure` when the site origin is https.
 
 ## How it works
 
-The wrapper intercepts two routes when proxy mode is active:
+The handler answers four routes itself when proxy mode is active:
 
 - `GET /api/keystatic/github/login` — signs a short-lived JWS containing
   `{site, from, jti}` with the shared handoff secret and redirects to the
@@ -68,8 +98,18 @@ The wrapper intercepts two routes when proxy mode is active:
   `keystatic-gh-access-token` and (AES-GCM-encrypted)
   `keystatic-gh-refresh-token` cookies Keystatic's own callback handler
   would have written. The Keystatic admin UI sees no difference.
+- `POST /api/keystatic/github/refresh-token` — called by the admin UI when
+  the access token expires. Decrypts the refresh-token cookie,
+  POSTs a short-lived JWS carrying it (`typ: keystatic-refresh+jwt`) to the
+  proxy's `/refresh`, verifies the handoff JWS the proxy answers with, and
+  writes fresh cookies. Answers 401 when there is nothing to renew, so the
+  admin UI shows its sign-in button.
+- `GET /api/keystatic/github/repo-not-found` — the admin UI sends the
+  browser here when the user can't reach the repo. Renews the tokens as
+  above, then redirects to Keystatic's repo-not-found page, or signs in
+  again through the proxy when renewal fails.
 
-All other paths fall through to `makeRouteHandler` unchanged.
+All other paths fall through to Keystatic's own handler unchanged.
 
 ## Security model
 
@@ -81,6 +121,8 @@ All other paths fall through to `makeRouteHandler` unchanged.
   against open-redirect abuse.
 - `Referrer-Policy: no-referrer` on the handoff redirect so the JWS in
   the URL can't leak via `document.referrer`.
+- Token refresh runs server to server: the refresh token travels to the
+  proxy only in the body of a signed POST, never through the browser.
 - The cookie encryption key (`KEYSTATIC_SECRET`) stays on the site and is
   never sent to the proxy. Refresh tokens are re-encrypted before being
   written to cookies, so the proxy never holds long-lived per-editor state.
@@ -92,8 +134,10 @@ pnpm test
 ```
 
 Regression suite covers handoff JWS round-trip, signature tampering,
-expired token, `alg=none` confusion, `from` path-traversal rejection, and
-cookie crypto round-trip against upstream Keystatic's scheme.
+expired token, `alg=none` confusion, `from` path-traversal rejection,
+cookie crypto in both directions against upstream Keystatic's own handler,
+the login, handoff, token refresh and repo-not-found routes, the site-origin
+helper, and a guard that the package source uses no Node-only APIs.
 
 ## License
 

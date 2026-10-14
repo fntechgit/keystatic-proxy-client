@@ -1,28 +1,30 @@
 import type { Config } from '@keystatic/core';
 
-export interface MakeProxyAwareRouteHandlerOptions {
+export interface MakeProxyAwareHandlerOptions {
     /** Keystatic config (required). */
     config: Config<any, any>;
-    /** Proxy origin. Defaults to `process.env.KEYSTATIC_AUTH_PROXY_URL`. */
+    /** Origin of the auth proxy. */
     proxyUrl?: string;
-    /** Shared HMAC secret. Defaults to `process.env.KEYSTATIC_AUTH_PROXY_HANDOFF_SECRET`. */
+    /** HMAC key shared with the proxy, for its signed requests and handoffs. */
     handoffSecret?: string;
-    /** Cookie encryption secret. Defaults to `process.env.KEYSTATIC_SECRET`. */
+    /** Cookie encryption key, at least 32 characters (Keystatic's KEYSTATIC_SECRET). */
     secret?: string;
-}
-
-export interface ProxyAwareRouteHandler {
-    GET: (req: Request) => Promise<Response>;
-    POST: (req: Request) => Promise<Response>;
+    /** This site's public origin. Defaults to the request URL's origin. */
+    siteOrigin?: (req: Request) => string;
 }
 
 /**
- * Create a Next.js App Router route handler that wraps `@keystatic/next`'s
- * `makeRouteHandler`. When proxy options are set (via params or env), GitHub
- * OAuth is routed through the configured external proxy instead of using
- * Keystatic's built-in OAuth handler. When proxy options are missing, behavior
- * is identical to calling `makeRouteHandler` directly (useful for local-mode dev).
+ * Create a Keystatic API handler for any host that speaks the Fetch API.
+ * Mount it on `/api/keystatic/*`. When `proxyUrl`, `handoffSecret` and
+ * `secret` are all set, GitHub sign-in and token refresh go through the
+ * shared auth proxy; every other route, and every route when they are
+ * missing, is Keystatic's own handler.
  */
-export function makeProxyAwareRouteHandler(
-    options: MakeProxyAwareRouteHandlerOptions
-): ProxyAwareRouteHandler;
+export function makeProxyAwareHandler(options: MakeProxyAwareHandlerOptions): (req: Request) => Promise<Response>;
+
+/**
+ * This site's origin from the Host (or X-Forwarded-Host) and
+ * X-Forwarded-Proto headers, for hosts that rewrite the request URL. Pass it
+ * as `siteOrigin`. Loopback hosts default to http, others to https.
+ */
+export function siteOriginFromRequest(req: Request): string;

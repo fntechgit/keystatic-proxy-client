@@ -1,39 +1,62 @@
-// Verifies the package's cookie crypto matches @keystatic/core's scheme:
-// HKDF-SHA256 over the secret, AES-GCM-256, with 16-byte salt and 12-byte IV
-// prepended to ciphertext, base64url-encoded.
+// The package's cookie crypto against @keystatic/core's own handler: Keystatic
+// reads the refresh cookie this package writes, and this package reads the
+// one Keystatic writes. The scheme is HKDF-SHA256 over the secret and
+// AES-GCM-256, with a 16-byte salt and 12-byte IV before the ciphertext, all
+// base64url-encoded.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { webcrypto } from 'node:crypto';
-import { encryptValue } from './crypto.js';
+import { config } from '@keystatic/core';
+import { makeGenericAPIRouteHandler } from '@keystatic/core/api/generic';
+import { encryptValue, decryptValue } from './crypto.js';
 
 const SECRET = 'cookie-' + 'a'.repeat(40);
 const SALT_LENGTH = 16;
 const IV_LENGTH = 12;
 
-async function decryptValue(encrypted, secret) {
-    const decoded = Buffer.from(encrypted, 'base64url');
-    const salt = decoded.subarray(0, SALT_LENGTH);
-    const iv = decoded.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
-    const ciphertext = decoded.subarray(SALT_LENGTH + IV_LENGTH);
-    const baseKey = await webcrypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'HKDF', false, ['deriveKey']);
-    const key = await webcrypto.subtle.deriveKey(
-        { name: 'HKDF', salt, hash: 'SHA-256', info: new Uint8Array(0) },
-        baseKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['decrypt']
-    );
-    const plaintext = await webcrypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
-    return new TextDecoder().decode(plaintext);
-}
+const keystatic = makeGenericAPIRouteHandler({
+    config: config({ storage: { kind: 'github', repo: 'owner/repo' } }),
+    secret: SECRET,
+    clientId: 'client-id',
+    clientSecret: 'client-secret'
+});
 
-test('encryptValue round-trips through Keystatic-compatible decrypt', async () => {
-    const original = 'gh_pat_secrettoken';
-    const encrypted = await encryptValue(original, SECRET);
-    assert.equal(typeof encrypted, 'string');
-    const back = await decryptValue(encrypted, SECRET);
-    assert.equal(back, original);
+test("Keystatic's handler reads the refresh cookie this package writes", async (t) => {
+    const sent = [];
+    t.mock.method(globalThis, 'fetch', async (url) => {
+        sent.push(new URL(url).searchParams.get('refresh_token'));
+        return Response.json({ error: 'bad_refresh_token' });
+    });
+    const cookie = `keystatic-gh-refresh-token=${await encryptValue('ghr_written', SECRET)}`;
+    await keystatic(
+        new Request('https://site.test/api/keystatic/github/refresh-token', { method: 'POST', headers: { cookie } })
+    );
+    assert.deepEqual(sent, ['ghr_written']);
+});
+
+test("decryptValue reads the refresh cookie Keystatic's handler writes", async (t) => {
+    t.mock.method(globalThis, 'fetch', async () =>
+        Response.json({
+            access_token: 'ghu_x',
+            expires_in: 28800,
+            refresh_token: 'ghr_from_keystatic',
+            refresh_token_expires_in: 15897600,
+            scope: '',
+            token_type: 'bearer'
+        })
+    );
+    const res = await keystatic(new Request('https://site.test/api/keystatic/github/oauth/callback?code=abc'));
+    const [, cookie] = res.headers.find(([name, value]) => name === 'Set-Cookie' && value.startsWith('keystatic-gh-refresh-token='));
+    assert.equal(await decryptValue(cookie.split(';')[0].split('=')[1], SECRET), 'ghr_from_keystatic');
+});
+
+test('decryptValue rejects a different secret and a tampered value', async () => {
+    const encrypted = await encryptValue('ghr_x', SECRET);
+    await assert.rejects(() => decryptValue(encrypted, 'other-' + 'b'.repeat(40)));
+    // A character inside the ciphertext, past the salt and IV.
+    const i = 40;
+    const tampered = encrypted.slice(0, i) + (encrypted[i] === 'A' ? 'B' : 'A') + encrypted.slice(i + 1);
+    await assert.rejects(() => decryptValue(tampered, SECRET));
 });
 
 test('encryptValue uses a fresh random salt+IV each call (no reuse)', async () => {
